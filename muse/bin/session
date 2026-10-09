@@ -16,7 +16,7 @@ Worker URL:   ~/.fleet-session-master second line, or FLEET_WORKER_URL env,
 """
 import json, os, sys, time, urllib.request, urllib.error
 
-PROD_URL = "https://fleet-session.casey-digennaro.workers.dev"
+PROD_URL = "https://fleet-session.purplepincher.org"
 
 def load_conf():
     token = os.environ.get("FLEET_MASTER_TOKEN", "")
@@ -36,6 +36,7 @@ def call(method, path, body=None, token=None, url=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url + path, data=data, method=method)
     req.add_header("Authorization", "Bearer " + token)
+    req.add_header("User-Agent", "fleet-session/1.0")
     if data: req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
