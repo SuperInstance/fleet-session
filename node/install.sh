@@ -15,7 +15,7 @@ if ! [[ "$NODE" =~ ^[a-z0-9-]{1,40}$ ]]; then
   exit 1
 fi
 
-WORKER_URL="${FLEET_WORKER_URL:-https://fleet-session.casey-digennaro.workers.dev}"
+WORKER_URL="${FLEET_WORKER_URL:-https://fleet-session.purplepincher.org}"
 RAW_BASE="https://raw.githubusercontent.com/SuperInstance/fleet-session/main"
 DIR="$HOME/.fleet-session"
 mkdir -p "$DIR"
