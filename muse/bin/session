@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""session — Muse's client for the fleet-session worker.
+
+Gives a Muse agent a command session on any approved fleet node, at will.
+
+Usage:
+  session nodes                          # list nodes + status + heartbeat age
+  session approve <node>                 # grant access (the explicit grant)
+  session revoke <node>                  # revoke access
+  session cmd <node> "<command>" [--timeout N] [--no-wait]
+                                         # run a command, wait, print result
+
+Master token: ~/.fleet-session-master (mode 600) or FLEET_MASTER_TOKEN env.
+Worker URL:   ~/.fleet-session-master second line, or FLEET_WORKER_URL env,
+              else the production default.
+"""
+import json, os, sys, time, urllib.request, urllib.error
+
+PROD_URL = "https://fleet-session.casey-digennaro.workers.dev"
+
+def load_conf():
+    token = os.environ.get("FLEET_MASTER_TOKEN", "")
+    url = os.environ.get("FLEET_WORKER_URL", "")
+    p = os.path.expanduser("~/.fleet-session-master")
+    if os.path.exists(p):
+        lines = open(p).read().splitlines()
+        if lines and not token: token = lines[0].strip()
+        if len(lines) > 1 and not url: url = lines[1].strip()
+    if not url: url = PROD_URL
+    if not token:
+        print("no master token: set FLEET_MASTER_TOKEN or write ~/.fleet-session-master", file=sys.stderr)
+        sys.exit(2)
+    return url.rstrip("/"), token
+
+def call(method, path, body=None, token=None, url=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url + path, data=data, method=method)
+    req.add_header("Authorization", "Bearer " + token)
+    if data: req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            t = r.read().decode()
+            return r.status, (json.loads(t) if t else None)
+    except urllib.error.HTTPError as e:
+        t = e.read().decode()
+        try: return e.code, json.loads(t)
+        except Exception: return e.code, {"error": t[:200]}
+    except Exception as e:
+        return 0, {"error": str(e)[:200]}
+
+def main():
+    url, token = load_conf()
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help", "help"):
+        print(__doc__); return
+    c = a[0]
+
+    if c == "nodes":
+        s, d = call("GET", "/v1/nodes", token=token, url=url)
+        if s != 200: print("error", s, d); sys.exit(1)
+        now = time.time() * 1000
+        for name, n in sorted(d.get("nodes", {}).items()):
+            age = int((now - n["last_heartbeat"]) / 1000) if n["last_heartbeat"] else -1
+            age_s = f"{age}s ago" if age >= 0 else "never"
+            print(f"{name:20} {n['status']:10} heartbeat {age_s}  {n.get('note','')}")
+        return
+
+    if c in ("approve", "revoke"):
+        if len(a) < 2: print("usage: session approve|revoke <node>"); sys.exit(2)
+        s, d = call("POST", f"/v1/nodes/{a[1]}/{c}", token=token, url=url)
+        print(json.dumps(d)); sys.exit(0 if s == 200 else 1)
+
+    if c == "cmd":
+        if len(a) < 3: print('usage: session cmd <node> "<command>" [--timeout N] [--no-wait]'); sys.exit(2)
+        node, command = a[1], a[2]
+        timeout = 300; wait = True
+        i = 3
+        while i < len(a):
+            if a[i] == "--timeout": timeout = int(a[i+1]); i += 2
+            elif a[i] == "--no-wait": wait = False; i += 1
+            else: i += 1
+        s, d = call("POST", f"/v1/nodes/{node}/commands",
+                    {"command": command, "timeout_secs": timeout}, token=token, url=url)
+        if s != 200: print("enqueue failed", s, d); sys.exit(1)
+        cid = d["cmd_id"]
+        print(f"cmd {cid} queued on {node}", file=sys.stderr)
+        if not wait:
+            print(cid); return
+        # poll for the result (node polls every ~5s; give it room)
+        deadline = time.time() + timeout + 120
+        while time.time() < deadline:
+            time.sleep(5)
+            s2, r = call("GET", f"/v1/nodes/{node}/results/{cid}", token=token, url=url)
+            if s2 == 200:
+                print(f"--- exit {r['exit_code']} ---")
+                if r.get("stdout"): print(r["stdout"], end="" if r["stdout"].endswith("\n") else "\n")
+                if r.get("stderr"): print("--- stderr ---"); print(r["stderr"], end="" if r["stderr"].endswith("\n") else "\n")
+                if r.get("truncated"): print("(output truncated at 90KB)", file=sys.stderr)
+                sys.exit(r["exit_code"])
+            elif s2 != 404:
+                print("result fetch error", s2, r, file=sys.stderr); sys.exit(1)
+        print("timed out waiting for result", file=sys.stderr); sys.exit(3)
+
+    print("unknown command:", c); sys.exit(2)
+
+if __name__ == "__main__":
+    main()
