@@ -59,9 +59,9 @@ def main():
     if c == "nodes":
         s, d = call("GET", "/v1/nodes", token=token, url=url)
         if s != 200: print("error", s, d); sys.exit(1)
-        now = time.time() * 1000
+        now = time.time()
         for name, n in sorted(d.get("nodes", {}).items()):
-            age = int((now - n["last_heartbeat"]) / 1000) if n["last_heartbeat"] else -1
+            age = int(now - n["last_heartbeat"]) if n["last_heartbeat"] else -1
             age_s = f"{age}s ago" if age >= 0 else "never"
             print(f"{name:20} {n['status']:10} heartbeat {age_s}  {n.get('note','')}")
         return
